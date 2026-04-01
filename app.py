@@ -572,16 +572,18 @@ if do_ask and question.strip():
     client = get_client()
     if client:
         prompt = ASK_PROMPT.format(question=question.strip())
-        answer_box = st.empty()
         collected = []
-        with st.spinner("정승재 선생님이 답변 중..."):
-            with client.messages.stream(
-                model="claude-opus-4-6",
-                max_tokens=2048,
-                messages=[{"role": "user", "content": prompt}],
-            ) as stream:
-                for chunk in stream.text_stream:
-                    collected.append(chunk)
-        answer = plain("".join(collected))
-        st.markdown(f'<div class="card"><pre style="margin:0;font-family:\'맑은 고딕\',sans-serif;white-space:pre-wrap;">{answer}</pre></div>',
-                    unsafe_allow_html=True)
+        try:
+            with st.spinner("정승재 선생님이 답변 중..."):
+                with client.messages.stream(
+                    model="claude-opus-4-6",
+                    max_tokens=2048,
+                    messages=[{"role": "user", "content": prompt}],
+                ) as stream:
+                    for chunk in stream.text_stream:
+                        collected.append(chunk)
+            answer = plain("".join(collected))
+            st.markdown(f'<div class="card"><pre style="margin:0;font-family:\'맑은 고딕\',sans-serif;white-space:pre-wrap;">{answer}</pre></div>',
+                        unsafe_allow_html=True)
+        except Exception as e:
+            st.error(f"답변 오류: {e}")
