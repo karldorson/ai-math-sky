@@ -228,6 +228,25 @@ ASK_PROMPT = """당신은 수학 선생님 정승재입니다.
 ■ 정리
 (이것만 기억하세요! — 한 줄로)"""
 
+VERIFY_PROMPT = """아래 수학 문제와 풀이를 검토하여 정답이 올바른지 검증하세요.
+마크다운 없이 순수 JSON만 출력하세요.
+""" + PLAIN_MATH_RULE + """
+
+[문제]
+{problem}
+
+[예상 정답]
+{answer}
+
+[풀이]
+{solution}
+
+{{
+  "verified": true 또는 false,
+  "reason": "검증 결과 한 줄 설명 (예: 풀이 마지막 단계의 값이 예상 정답과 일치합니다)",
+  "correct_answer": "풀이에서 도출된 실제 정답 (예상 정답과 다를 경우 명시)"
+}}"""
+
 SIMILAR_PROMPT = """아래 수학 문제와 같은 개념의 유사 문제 3개를 만들어주세요.
 마크다운 없이 순수 JSON 배열만 출력하세요.
 """ + PLAIN_MATH_RULE + """
@@ -331,6 +350,8 @@ if uploaded:
         st.session_state["img_key"] = img_key
         st.session_state.pop("analysis", None)
         st.session_state.pop("similar_list", None)
+        st.session_state.pop("solution", None)
+        st.session_state.pop("verification", None)
 
     # ── 버튼 행 ─────────────────────────────────────────────────────
     col_a, col_b, col_c = st.columns([1, 1, 2])
@@ -392,12 +413,34 @@ if do_solve:
                 chunks = []
                 for text in stream.text_stream:
                     chunks.append(text)
-            result = plain("".join(chunks))
-            st.caption(f"DEBUG 풀이 — chunks: {len(chunks)}, 길이: {len(result)}, 앞부분: {result[:80]!r}")
-            st.session_state["solution"] = result
+            st.session_state["solution"] = plain("".join(chunks))
         except Exception as e:
             st.error(f"풀이 오류: {e}")
             st.stop()
+
+        # 3단계: 검증
+        with st.spinner("풀이 검증 중..."):
+            verify_prompt = VERIFY_PROMPT.format(
+                problem=analysis["problemText"],
+                answer=analysis.get("answer", ""),
+                solution=st.session_state["solution"],
+            )
+            vr = client.messages.create(
+                model="claude-opus-4-6",
+                max_tokens=256,
+                messages=[{"role": "user", "content": verify_prompt}],
+            )
+        vraw = next((b.text for b in vr.content if b.type == "text"), "{}")
+        vraw = vraw.strip()
+        if vraw.startswith("```"):
+            vraw = vraw.split("```")[1]
+            if vraw.startswith("json"):
+                vraw = vraw[4:]
+            vraw = vraw.strip()
+        try:
+            st.session_state["verification"] = json.loads(vraw)
+        except Exception:
+            st.session_state["verification"] = {"verified": None, "reason": "검증 결과를 파싱하지 못했습니다.", "correct_answer": ""}
 
         st.rerun()  # 버튼 disabled 상태 갱신
 
@@ -432,6 +475,20 @@ if "analysis" in st.session_state:
     if "solution" in st.session_state:
         st.markdown(f'<div class="card"><pre style="margin:0;font-family:\'맑은 고딕\',sans-serif;white-space:pre-wrap;">{st.session_state["solution"]}</pre></div>',
                     unsafe_allow_html=True)
+
+        # 검증 결과
+        if "verification" in st.session_state:
+            v = st.session_state["verification"]
+            if v.get("verified") is True:
+                st.success(f"✅ 검증 통과 — {v.get('reason', '')}")
+            elif v.get("verified") is False:
+                correct = v.get("correct_answer", "")
+                msg = f"⚠️ 정답 불일치 — {v.get('reason', '')}"
+                if correct:
+                    msg += f"\n풀이에서 도출된 정답: **{correct}**"
+                st.warning(msg)
+            else:
+                st.caption(f"검증: {v.get('reason', '')}")
     else:
         st.caption("📝 문제 풀이 버튼을 눌러주세요.")
 
