@@ -291,6 +291,7 @@ if uploaded:
     st.image(uploaded, use_container_width=True)
 
 if uploaded:
+    uploaded.seek(0)
     image_bytes = uploaded.read()
     b64 = base64.standard_b64encode(image_bytes).decode()
     mime = uploaded.type or "image/jpeg"
@@ -308,7 +309,7 @@ if uploaded:
     do_similar = col_b.button("🎲 유사문제 조회", use_container_width=True,
                                disabled="analysis" not in st.session_state)
 else:
-    st.info("👈 왼쪽 사이드바에서 수학 문제 이미지를 업로드하거나, 아래 질문창에 직접 물어보세요.")
+    st.info("위에서 수학 문제 이미지를 업로드하거나, 아래 질문창에 직접 물어보세요.")
     do_solve = False
     do_similar = False
     b64 = mime = None
