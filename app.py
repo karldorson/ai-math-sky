@@ -1,5 +1,5 @@
 """
-AI 수학 풀이 도우미 — Streamlit Cloud 버전
+Easy 수학 풀이 도우미 — Streamlit Cloud 버전
 """
 
 import base64
@@ -13,7 +13,7 @@ import streamlit as st
 
 # ─── 페이지 설정 ────────────────────────────────────────────────
 st.set_page_config(
-    page_title="AI 수학 풀이 도우미",
+    page_title="Easy 수학 풀이 도우미",
     page_icon="📐",
     layout="wide",
 )
@@ -323,7 +323,7 @@ def get_client() -> anthropic.Anthropic | None:
 
 # ─── 사이드바 ────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 📐 AI 수학 풀이")
+    st.markdown("## 📐 Easy 수학 풀이")
     st.divider()
 
     # API 키 (secrets에 없을 때만 입력란 표시)
@@ -346,7 +346,7 @@ with st.sidebar:
 
 
 # ─── 메인 ────────────────────────────────────────────────────────
-st.markdown("# 📐 AI 수학 풀이 도우미")
+st.markdown("# 📐 Easy 수학 풀이 도우미")
 
 # 이미지 업로드 (메인 화면 — 모바일 대응)
 uploaded = st.file_uploader(
