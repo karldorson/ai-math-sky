@@ -204,8 +204,8 @@ SOLVE_PROMPT = """당신은 수학 선생님 정승재입니다.
 ■ 자주 하는 실수
 (여기서 많이 틀려요! — 한 줄로)
 
-■ 답
-{answer_placeholder}"""
+■ 풀이 과정의 최종 답
+(풀이 단계에서 계산한 값만 적을 것 — 정답 박스의 값과 다를 수 있음)"""
 
 ASK_PROMPT = """당신은 수학 선생님 정승재입니다.
 학생이 이해하기 쉽게, 핵심만 짧고 명확하게 설명하세요.
@@ -290,18 +290,15 @@ def solve_with_sympy(code: str) -> tuple[str | None, str]:
     status: 'sympy' | 'unsafe' | 'no_answer' | 'error:...'
     """
     BLOCKED = ["import os", "import sys", "open(", "exec(", "eval(",
-               "__import__", "subprocess", "shutil", "socket"]
+               "subprocess", "shutil", "socket", "__import__"]
     if any(b in code for b in BLOCKED):
         return None, "unsafe"
     try:
         import sympy as _sympy
+        # sympy 심볼 전체를 미리 주입 → 'from sympy import *' 불필요하지만 있어도 동작
         ns = {k: getattr(_sympy, k) for k in dir(_sympy) if not k.startswith("_")}
-        ns["__builtins__"] = {
-            "abs": abs, "int": int, "float": float, "str": str,
-            "list": list, "tuple": tuple, "sorted": sorted,
-            "len": len, "range": range, "print": print,
-            "complex": complex, "round": round,
-        }
+        ns["__builtins__"] = __builtins__  # import 허용 (BLOCKED로 위험 패턴 차단)
+        # 'from sympy import *' 줄이 있어도 중복만 될 뿐 오류 없음
         exec(compile(code, "<sympy_solve>", "exec"), ns)  # noqa: S102
         answer = ns.get("answer")
         if answer is None:
@@ -366,7 +363,7 @@ if uploaded:
     b64 = base64.standard_b64encode(image_bytes).decode()
 
     # 이미지가 바뀌면 세션 초기화
-    img_key = uploaded.name + str(len(image_bytes))
+    img_key = uploaded.name + str(uploaded.size)
     if st.session_state.get("img_key") != img_key:
         st.session_state["img_key"] = img_key
         st.session_state.pop("analysis", None)
@@ -437,6 +434,12 @@ if do_solve:
 
         sympy_answer, sympy_status = solve_with_sympy(sympy_code)
 
+        with st.expander("🔍 DEBUG: SymPy 코드 및 실행 결과", expanded=True):
+            st.code(sympy_code, language="python")
+            st.write(f"**Claude 원본 정답:** {analysis.get('answer')}")
+            st.write(f"**SymPy 실행 결과:** {sympy_answer}")
+            st.write(f"**SymPy 상태:** {sympy_status}")
+
         if sympy_answer and sympy_answer != "None":
             analysis["answer"] = sympy_answer
             verification = {"source": "sympy", "reason": f"SymPy 수학 계산 완료: {sympy_answer}"}
@@ -446,12 +449,8 @@ if do_solve:
         st.session_state["analysis"] = analysis
         st.session_state["verification"] = verification
 
-        # 3단계: 스트리밍 풀이 (확정된 정답 기반)
-        ans_hint = f"답: {analysis['answer']}" if analysis.get("answer") else "위 풀이에서 확인"
-        prompt = SOLVE_PROMPT.format(
-            problem=analysis["problemText"],
-            answer_placeholder=ans_hint,
-        )
+        # 3단계: 스트리밍 풀이 (Claude가 독립적으로 풀이 과정 설명)
+        prompt = SOLVE_PROMPT.format(problem=analysis["problemText"])
         try:
             with client.messages.stream(
                 model="claude-opus-4-6",
@@ -482,10 +481,13 @@ if "analysis" in st.session_state:
     m2.metric("난이도", stars)
 
     # 정답 박스
+    v = st.session_state.get("verification", {})
+    answer_source = "SymPy 수학 계산" if v.get("source") == "sympy" else "Claude AI 추정"
     st.markdown(f"""
     <div class="ans-box">
       <span style="font-size:1.05em;font-weight:bold;color:#20c997;">✅ 정 답&nbsp;&nbsp;</span>
       <span style="font-size:1.2em;font-weight:bold;color:#0a7554;">{a.get('answer') or '풀이 확인 필요'}</span>
+      <span style="font-size:0.8em;color:#888;margin-left:12px;">({answer_source})</span>
     </div>
     """, unsafe_allow_html=True)
 
