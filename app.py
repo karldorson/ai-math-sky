@@ -434,17 +434,13 @@ if do_solve:
 
         sympy_answer, sympy_status = solve_with_sympy(sympy_code)
 
-        with st.expander("🔍 DEBUG: SymPy 코드 및 실행 결과", expanded=True):
-            st.code(sympy_code, language="python")
-            st.write(f"**Claude 원본 정답:** {analysis.get('answer')}")
-            st.write(f"**SymPy 실행 결과:** {sympy_answer}")
-            st.write(f"**SymPy 상태:** {sympy_status}")
-
+        # 정답 박스는 Claude 분석 결과 유지, SymPy는 보조 검증만
         if sympy_answer and sympy_answer != "None":
-            analysis["answer"] = sympy_answer
-            verification = {"source": "sympy", "reason": f"SymPy 수학 계산 완료: {sympy_answer}"}
+            verification = {"source": "sympy", "sympy_answer": sympy_answer,
+                            "reason": f"SymPy 검증 완료: {sympy_answer}"}
         else:
-            verification = {"source": "claude", "reason": f"SymPy 계산 불가({sympy_status}) — Claude AI 답변 사용"}
+            verification = {"source": "claude", "sympy_answer": None,
+                            "reason": f"SymPy 검증 불가 ({sympy_status})"}
 
         st.session_state["analysis"] = analysis
         st.session_state["verification"] = verification
@@ -461,6 +457,13 @@ if do_solve:
                 for text in stream.text_stream:
                     chunks.append(text)
             st.session_state["solution"] = plain("".join(chunks))
+
+            # 풀이 마지막 "■ 풀이 과정의 최종 답" 섹션에서 정답 추출
+            solution_text = st.session_state["solution"]
+            match = re.search(r"■\s*풀이 과정의 최종 답\s*\n(.+)", solution_text)
+            if match:
+                analysis["answer"] = match.group(1).strip()
+                st.session_state["analysis"] = analysis
         except Exception as e:
             st.error(f"풀이 오류: {e}")
             st.stop()
@@ -481,13 +484,10 @@ if "analysis" in st.session_state:
     m2.metric("난이도", stars)
 
     # 정답 박스
-    v = st.session_state.get("verification", {})
-    answer_source = "SymPy 수학 계산" if v.get("source") == "sympy" else "Claude AI 추정"
     st.markdown(f"""
     <div class="ans-box">
       <span style="font-size:1.05em;font-weight:bold;color:#20c997;">✅ 정 답&nbsp;&nbsp;</span>
       <span style="font-size:1.2em;font-weight:bold;color:#0a7554;">{a.get('answer') or '풀이 확인 필요'}</span>
-      <span style="font-size:0.8em;color:#888;margin-left:12px;">({answer_source})</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -502,13 +502,18 @@ if "analysis" in st.session_state:
         st.markdown(f'<div class="card"><pre style="margin:0;font-family:\'맑은 고딕\',sans-serif;white-space:pre-wrap;">{st.session_state["solution"]}</pre></div>',
                     unsafe_allow_html=True)
 
-        # 검증 결과
+        # SymPy 보조 검증 결과
         if "verification" in st.session_state:
             v = st.session_state["verification"]
+            sympy_ans = v.get("sympy_answer")
+            claude_ans = st.session_state.get("analysis", {}).get("answer", "")
             if v.get("source") == "sympy":
-                st.success(f"✅ SymPy 수학 계산으로 검증된 정답 — {v.get('reason', '')}")
+                if sympy_ans == claude_ans:
+                    st.success(f"✅ SymPy 검증 일치: {sympy_ans}")
+                else:
+                    st.info(f"ℹ️ SymPy 계산값: {sympy_ans}  |  Claude 분석값: {claude_ans}  (정답 박스는 Claude 기준)")
             else:
-                st.warning(f"⚠️ Claude AI 추정 정답 (수학 검증 불가) — {v.get('reason', '')}")
+                st.caption(f"SymPy 검증 불가 — {v.get('reason', '')}")
     else:
         st.caption("📝 문제 풀이 버튼을 눌러주세요.")
 
