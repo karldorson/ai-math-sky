@@ -319,16 +319,21 @@ if do_solve:
     client = get_client()
     if client:
         # 1단계: 분석
+        st.caption(f"DEBUG — mime: {mime}, bytes: {len(image_bytes)}, b64 len: {len(b64)}")
         with st.spinner("AI가 문제를 분석하는 중..."):
-            r = client.messages.create(
-                model="claude-opus-4-6",
-                max_tokens=1024,
-                messages=[{"role": "user", "content": [
-                    {"type": "image", "source": {"type": "base64",
-                                                 "media_type": mime, "data": b64}},
-                    {"type": "text", "text": ANALYZE_PROMPT},
-                ]}],
-            )
+            try:
+                r = client.messages.create(
+                    model="claude-opus-4-6",
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": [
+                        {"type": "image", "source": {"type": "base64",
+                                                     "media_type": mime, "data": b64}},
+                        {"type": "text", "text": ANALYZE_PROMPT},
+                    ]}],
+                )
+            except Exception as e:
+                st.error(f"API 오류: {e}")
+                st.stop()
         raw = next((b.text for b in r.content if b.type == "text"), "{}")
         raw = raw.strip()
         if raw.startswith("```"):
