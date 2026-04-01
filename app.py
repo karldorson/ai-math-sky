@@ -275,23 +275,20 @@ with st.sidebar:
         st.success("✔ API 키 설정됨")
 
     st.divider()
-
-    # 이미지 업로드
-    uploaded = st.file_uploader(
-        "📷 수학 문제 이미지",
-        type=["jpg", "jpeg", "png", "webp", "bmp"],
-        help="문제가 찍힌 사진이나 스크린샷을 올려주세요",
-    )
-
-    if uploaded:
-        st.image(uploaded, use_container_width=True)
-
-    st.divider()
     st.caption("powered by Claude Opus 4.6")
 
 
 # ─── 메인 ────────────────────────────────────────────────────────
 st.markdown("# 📐 AI 수학 풀이 도우미")
+
+# 이미지 업로드 (메인 화면 — 모바일 대응)
+uploaded = st.file_uploader(
+    "📷 수학 문제 이미지를 올려주세요",
+    type=["jpg", "jpeg", "png", "webp", "bmp"],
+    help="문제가 찍힌 사진이나 스크린샷을 올려주세요",
+)
+if uploaded:
+    st.image(uploaded, use_container_width=True)
 
 if uploaded:
     image_bytes = uploaded.read()
