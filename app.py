@@ -16,6 +16,25 @@ st.set_page_config(
     layout="wide",
 )
 
+# ─── 비밀번호 인증 ───────────────────────────────────────────────
+def check_password() -> bool:
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.markdown("## 🔒 접근 제한")
+    pw = st.text_input("비밀번호를 입력하세요", type="password")
+    if st.button("확인"):
+        correct = st.secrets.get("APP_PASSWORD", "")
+        if pw == correct:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 틀렸습니다.")
+    return False
+
+if not check_password():
+    st.stop()
+
 st.markdown("""
 <style>
 /* 전체 배경 */
