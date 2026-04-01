@@ -228,27 +228,18 @@ ASK_PROMPT = """당신은 수학 선생님 정승재입니다.
 ■ 정리
 (이것만 기억하세요! — 한 줄로)"""
 
-EXTRACT_ANSWER_PROMPT = """아래 예상 정답과 풀이에서 최종 정답을 추출하여 SymPy로 파싱 가능한 Python 표현식으로 변환하세요.
-마크다운 없이 순수 JSON만 출력하세요.
+SYMPY_CODE_PROMPT = """아래 수학 문제를 SymPy Python 코드로 작성하세요.
+순수 Python 코드만 출력하세요 (마크다운, 설명 없이).
 
-[예상 정답]
-{answer}
+[문제]
+{problem}
 
-[풀이]
-{solution}
-
-변환 규칙:
-- 정수/소수: 그대로 (예: 2, -3, 0.5)
-- 분수: Rational(1,2) 형식
-- 제곱근: sqrt(2) 형식
-- 여러 해: 리스트 (예: [2, 3])
-- 방정식 x=2 → 2 (값만)
-- 파싱 불가능한 경우: null
-
-{{
-  "expected": "예상 정답의 SymPy 표현식 또는 null",
-  "derived": "풀이에서 도출한 정답의 SymPy 표현식 또는 null"
-}}"""
+규칙:
+- 반드시 첫 줄: from sympy import *
+- 반드시 마지막 줄: answer = 최종정답
+- 해가 여러 개면: answer = sorted([2, 3], key=lambda x: complex(x).real)
+- SymPy로 풀 수 없으면: answer = None
+- 코드 외 텍스트 절대 금지"""
 
 SIMILAR_PROMPT = """아래 수학 문제와 같은 개념의 유사 문제 3개를 만들어주세요.
 마크다운 없이 순수 JSON 배열만 출력하세요.
@@ -293,38 +284,31 @@ def compress_image(file, max_bytes: int = 4 * 1024 * 1024) -> tuple[bytes, str]:
     return buf.getvalue(), "image/jpeg"
 
 
-# ─── SymPy 검증 ─────────────────────────────────────────────────
-def verify_with_sympy(expected_str: str | None, derived_str: str | None) -> dict:
-    if not expected_str or not derived_str:
-        return {"verified": None, "reason": "SymPy로 파싱할 수 없는 형태의 정답입니다.", "correct_answer": ""}
+# ─── SymPy 직접 풀기 ────────────────────────────────────────────
+def solve_with_sympy(code: str) -> tuple[str | None, str]:
+    """SymPy 코드를 실행해 정답 반환. (answer_str, status) 형태.
+    status: 'sympy' | 'unsafe' | 'no_answer' | 'error:...'
+    """
+    BLOCKED = ["import os", "import sys", "open(", "exec(", "eval(",
+               "__import__", "subprocess", "shutil", "socket"]
+    if any(b in code for b in BLOCKED):
+        return None, "unsafe"
     try:
-        from sympy import simplify, sqrt, Rational  # noqa: F401
-        from sympy.parsing.sympy_parser import (
-            parse_expr, standard_transformations, implicit_multiplication_application,
-        )
-        import ast
-
-        transformations = standard_transformations + (implicit_multiplication_application,)
-        local_dict = {"sqrt": sqrt, "Rational": Rational}
-
-        def parse_one(s: str):
-            return parse_expr(s.strip(), transformations=transformations, local_dict=local_dict)
-
-        # 리스트 형태 (여러 해)
-        if expected_str.strip().startswith("[") and derived_str.strip().startswith("["):
-            exp_vals = [str(simplify(parse_one(str(v)))) for v in ast.literal_eval(expected_str)]
-            der_vals = [str(simplify(parse_one(str(v)))) for v in ast.literal_eval(derived_str)]
-            verified = sorted(exp_vals) == sorted(der_vals)
-        else:
-            diff = simplify(parse_one(expected_str) - parse_one(derived_str))
-            verified = diff == 0
-
-        if verified:
-            return {"verified": True, "reason": f"SymPy 수학 검증 통과: {expected_str} = {derived_str}", "correct_answer": ""}
-        else:
-            return {"verified": False, "reason": f"정답 불일치: 예상 {expected_str} ≠ 풀이 {derived_str}", "correct_answer": derived_str}
+        import sympy as _sympy
+        ns = {k: getattr(_sympy, k) for k in dir(_sympy) if not k.startswith("_")}
+        ns["__builtins__"] = {
+            "abs": abs, "int": int, "float": float, "str": str,
+            "list": list, "tuple": tuple, "sorted": sorted,
+            "len": len, "range": range, "print": print,
+            "complex": complex, "round": round,
+        }
+        exec(compile(code, "<sympy_solve>", "exec"), ns)  # noqa: S102
+        answer = ns.get("answer")
+        if answer is None:
+            return None, "no_answer"
+        return str(answer), "sympy"
     except Exception as e:
-        return {"verified": None, "reason": f"SymPy 계산 오류: {e}", "correct_answer": ""}
+        return None, f"error: {e}"
 
 
 # ─── API 클라이언트 ──────────────────────────────────────────────
@@ -432,10 +416,37 @@ if do_solve:
         analysis["problemText"] = plain(analysis.get("problemText", ""))
         analysis["formulas"]    = plain(analysis.get("formulas", ""))
         analysis["answer"]      = plain(analysis.get("answer", ""))
-        st.session_state["analysis"] = analysis
         st.session_state.pop("similar_list", None)
 
-        # 2단계: 스트리밍 풀이
+        # 2단계: SymPy로 직접 계산
+        with st.spinner("SymPy로 정확한 정답 계산 중..."):
+            sc = client.messages.create(
+                model="claude-opus-4-6",
+                max_tokens=512,
+                messages=[{"role": "user", "content": SYMPY_CODE_PROMPT.format(
+                    problem=analysis["problemText"]
+                )}],
+            )
+        sympy_code = next((b.text for b in sc.content if b.type == "text"), "")
+        sympy_code = sympy_code.strip()
+        if sympy_code.startswith("```"):
+            sympy_code = sympy_code.split("```")[1]
+            if sympy_code.startswith("python"):
+                sympy_code = sympy_code[6:]
+            sympy_code = sympy_code.strip()
+
+        sympy_answer, sympy_status = solve_with_sympy(sympy_code)
+
+        if sympy_answer and sympy_answer != "None":
+            analysis["answer"] = sympy_answer
+            verification = {"source": "sympy", "reason": f"SymPy 수학 계산 완료: {sympy_answer}"}
+        else:
+            verification = {"source": "claude", "reason": f"SymPy 계산 불가({sympy_status}) — Claude AI 답변 사용"}
+
+        st.session_state["analysis"] = analysis
+        st.session_state["verification"] = verification
+
+        # 3단계: 스트리밍 풀이 (확정된 정답 기반)
         ans_hint = f"답: {analysis['answer']}" if analysis.get("answer") else "위 풀이에서 확인"
         prompt = SOLVE_PROMPT.format(
             problem=analysis["problemText"],
@@ -454,33 +465,6 @@ if do_solve:
         except Exception as e:
             st.error(f"풀이 오류: {e}")
             st.stop()
-
-        # 3단계: 정답 추출 → SymPy 검증
-        with st.spinner("SymPy로 정답 검증 중..."):
-            extract_prompt = EXTRACT_ANSWER_PROMPT.format(
-                answer=analysis.get("answer", ""),
-                solution=st.session_state["solution"],
-            )
-            er = client.messages.create(
-                model="claude-opus-4-6",
-                max_tokens=256,
-                messages=[{"role": "user", "content": extract_prompt}],
-            )
-        eraw = next((b.text for b in er.content if b.type == "text"), "{}")
-        eraw = eraw.strip()
-        if eraw.startswith("```"):
-            eraw = eraw.split("```")[1]
-            if eraw.startswith("json"):
-                eraw = eraw[4:]
-            eraw = eraw.strip()
-        try:
-            extracted = json.loads(eraw)
-        except Exception:
-            extracted = {"expected": None, "derived": None}
-
-        st.session_state["verification"] = verify_with_sympy(
-            extracted.get("expected"), extracted.get("derived")
-        )
 
         st.rerun()  # 버튼 disabled 상태 갱신
 
@@ -519,16 +503,10 @@ if "analysis" in st.session_state:
         # 검증 결과
         if "verification" in st.session_state:
             v = st.session_state["verification"]
-            if v.get("verified") is True:
-                st.success(f"✅ 검증 통과 — {v.get('reason', '')}")
-            elif v.get("verified") is False:
-                correct = v.get("correct_answer", "")
-                msg = f"⚠️ 정답 불일치 — {v.get('reason', '')}"
-                if correct:
-                    msg += f"\n풀이에서 도출된 정답: **{correct}**"
-                st.warning(msg)
+            if v.get("source") == "sympy":
+                st.success(f"✅ SymPy 수학 계산으로 검증된 정답 — {v.get('reason', '')}")
             else:
-                st.caption(f"검증: {v.get('reason', '')}")
+                st.warning(f"⚠️ Claude AI 추정 정답 (수학 검증 불가) — {v.get('reason', '')}")
     else:
         st.caption("📝 문제 풀이 버튼을 눌러주세요.")
 
