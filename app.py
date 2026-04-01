@@ -383,15 +383,21 @@ if do_solve:
             problem=analysis["problemText"],
             answer_placeholder=ans_hint,
         )
-        with client.messages.stream(
-            model="claude-opus-4-6",
-            max_tokens=2048,
-            messages=[{"role": "user", "content": prompt}],
-        ) as stream:
-            chunks = []
-            for text in stream.text_stream:
-                chunks.append(text)
-            st.session_state["solution"] = plain("".join(chunks))
+        try:
+            with client.messages.stream(
+                model="claude-opus-4-6",
+                max_tokens=2048,
+                messages=[{"role": "user", "content": prompt}],
+            ) as stream:
+                chunks = []
+                for text in stream.text_stream:
+                    chunks.append(text)
+            result = plain("".join(chunks))
+            st.caption(f"DEBUG 풀이 — chunks: {len(chunks)}, 길이: {len(result)}, 앞부분: {result[:80]!r}")
+            st.session_state["solution"] = result
+        except Exception as e:
+            st.error(f"풀이 오류: {e}")
+            st.stop()
 
         st.rerun()  # 버튼 disabled 상태 갱신
 
