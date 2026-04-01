@@ -3,10 +3,12 @@ AI 수학 풀이 도우미 — Streamlit Cloud 버전
 """
 
 import base64
+import io
 import json
 import re
 
 import anthropic
+from PIL import Image
 import streamlit as st
 
 # ─── 페이지 설정 ────────────────────────────────────────────────
@@ -241,6 +243,34 @@ SIMILAR_PROMPT = """아래 수학 문제와 같은 개념의 유사 문제 3개�
 ]"""
 
 
+# ─── 이미지 압축 ────────────────────────────────────────────────
+def compress_image(file, max_bytes: int = 4 * 1024 * 1024) -> tuple[bytes, str]:
+    """5MB 제한에 맞게 이미지를 압축. (bytes, mime) 반환"""
+    img = Image.open(file)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    # 크기 축소 (긴 변 2048px 이하)
+    max_dim = 2048
+    w, h = img.size
+    if max(w, h) > max_dim:
+        ratio = max_dim / max(w, h)
+        img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+
+    # 품질 낮춰가며 압축
+    for quality in (85, 70, 55, 40):
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        if buf.tell() <= max_bytes:
+            return buf.getvalue(), "image/jpeg"
+
+    # 그래도 크면 크기 추가 축소
+    img = img.resize((img.width // 2, img.height // 2), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=40)
+    return buf.getvalue(), "image/jpeg"
+
+
 # ─── API 클라이언트 ──────────────────────────────────────────────
 def get_client() -> anthropic.Anthropic | None:
     # 1순위: Streamlit Cloud secrets
@@ -292,9 +322,8 @@ if uploaded:
 
 if uploaded:
     uploaded.seek(0)
-    image_bytes = uploaded.read()
+    image_bytes, mime = compress_image(uploaded)
     b64 = base64.standard_b64encode(image_bytes).decode()
-    mime = uploaded.type or "image/jpeg"
 
     # 이미지가 바뀌면 세션 초기화
     img_key = uploaded.name + str(len(image_bytes))
@@ -319,21 +348,16 @@ if do_solve:
     client = get_client()
     if client:
         # 1단계: 분석
-        st.caption(f"DEBUG — mime: {mime}, bytes: {len(image_bytes)}, b64 len: {len(b64)}")
         with st.spinner("AI가 문제를 분석하는 중..."):
-            try:
-                r = client.messages.create(
-                    model="claude-opus-4-6",
-                    max_tokens=1024,
-                    messages=[{"role": "user", "content": [
-                        {"type": "image", "source": {"type": "base64",
-                                                     "media_type": mime, "data": b64}},
-                        {"type": "text", "text": ANALYZE_PROMPT},
-                    ]}],
-                )
-            except Exception as e:
-                st.error(f"API 오류: {e}")
-                st.stop()
+            r = client.messages.create(
+                model="claude-opus-4-6",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64",
+                                                 "media_type": mime, "data": b64}},
+                    {"type": "text", "text": ANALYZE_PROMPT},
+                ]}],
+            )
         raw = next((b.text for b in r.content if b.type == "text"), "{}")
         raw = raw.strip()
         if raw.startswith("```"):
